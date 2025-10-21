@@ -1,0 +1,18 @@
+{
+  "torch": {
+    "claim": "generate_code",
+    "task": "Create a simple hello world function",
+    "os": "windows",
+    "workspace_root": "C:\\demo",
+    "attachments": [],
+    "context": {
+      "current_file": null,
+      "project_structure": [],
+      "terminal_history": []
+    }
+  },
+  "metadata": {
+    "timestamp": "2025-10-21T11:15:27Z",
+    "test": true
+  }
+}

@@ -12,6 +12,7 @@ import { FileOperationsManager } from './managers/fileOperationsManager';
 import { BackendRequestHandler } from './managers/backendRequestHandler';
 import { PartyBoxManager } from './managers/partyBoxManager';
 import { MCPClient } from './handlers/mcpClient';
+import { CampfireChatPanelProvider } from './providers/chatPanelProvider';
 
 let commandHandler: CommandHandler;
 let configManager: ConfigurationManager;
@@ -21,6 +22,7 @@ let fileOperationsManager: FileOperationsManager;
 let backendRequestHandler: BackendRequestHandler;
 let partyBoxManager: PartyBoxManager;
 let mcpClient: MCPClient;
+let chatPanelProvider: CampfireChatPanelProvider;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('CampfireDevAgent is now active');
@@ -55,6 +57,17 @@ export function activate(context: vscode.ExtensionContext) {
         // Initialize command handler with all required dependencies
         commandHandler = new CommandHandler(configManager, workspaceManager, terminalManager);
 
+        // Initialize chat panel provider
+        chatPanelProvider = new CampfireChatPanelProvider(context.extensionUri, config);
+
+        // Register webview panel provider
+        context.subscriptions.push(
+            vscode.window.registerWebviewViewProvider(
+                CampfireChatPanelProvider.viewType,
+                chatPanelProvider
+            )
+        );
+
         // Register commands
         const generateCodeCommand = vscode.commands.registerCommand(
             'campfire.generateCode',
@@ -66,9 +79,17 @@ export function activate(context: vscode.ExtensionContext) {
             () => commandHandler.handleReviewCode()
         );
 
+        const openChatCommand = vscode.commands.registerCommand(
+            'campfire.openChat',
+            () => {
+                vscode.commands.executeCommand('campfire.chatPanel.focus');
+            }
+        );
+
         // Add to subscriptions for proper cleanup
         context.subscriptions.push(generateCodeCommand);
         context.subscriptions.push(reviewCodeCommand);
+        context.subscriptions.push(openChatCommand);
 
         // Listen for configuration changes
         const configChangeListener = vscode.workspace.onDidChangeConfiguration(event => {
@@ -79,6 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
                 // Update all components that depend on configuration
                 partyBoxManager = new PartyBoxManager(newConfig);
                 mcpClient = new MCPClient(newConfig);
+                chatPanelProvider.updateConfiguration(newConfig);
                 commandHandler.updateConfiguration();
             }
         });
@@ -92,6 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
             const newConfig = configManager.getConfiguration();
             partyBoxManager = new PartyBoxManager(newConfig);
             mcpClient = new MCPClient(newConfig);
+            chatPanelProvider.updateConfiguration(newConfig);
         });
         
         context.subscriptions.push(workspaceChangeListener);

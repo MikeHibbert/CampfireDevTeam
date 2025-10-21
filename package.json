@@ -11,7 +11,8 @@
   ],
   "activationEvents": [
     "onCommand:campfire.generateCode",
-    "onCommand:campfire.reviewCode"
+    "onCommand:campfire.reviewCode",
+    "onView:campfire.chatPanel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -23,6 +24,28 @@
       {
         "command": "campfire.reviewCode",
         "title": "Campfire: Review Code"
+      },
+      {
+        "command": "campfire.openChat",
+        "title": "Campfire: Open Chat",
+        "icon": "$(comment-discussion)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "campfire.chatPanel",
+          "name": "Campfire Chat",
+          "icon": "$(flame)",
+          "contextualTitle": "CampfireDevTeam"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "campfire.chatPanel",
+        "contents": "Welcome to CampfireDevTeam! 🔥\n\nYour AI development team is ready to help.\n\n[Start Chatting](command:campfire.openChat)\n\nOr use the commands:\n- Generate Code (Ctrl+Shift+G)\n- Review Code (Ctrl+Shift+R)"
       }
     ],
     "keybindings": [
