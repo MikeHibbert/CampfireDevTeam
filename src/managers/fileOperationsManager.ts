@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { WorkspaceManager } from './workspaceManager';
+import { ErrorHandler, ErrorType, ErrorSeverity } from '../utils/errorHandler';
 
 export interface FileCreationOptions {
     overwriteConfirmation?: boolean;
@@ -31,6 +32,7 @@ export interface ProjectStructureInfo {
 
 export class FileOperationsManager {
     private workspaceManager: WorkspaceManager;
+    private readonly errorHandler: ErrorHandler;
     private readonly supportedFileTypes = new Map<string, FileTypeInfo>([
         ['.py', { 
             type: 'python', 
@@ -90,11 +92,13 @@ export class FileOperationsManager {
 
     constructor(workspaceManager: WorkspaceManager) {
         this.workspaceManager = workspaceManager;
+        this.errorHandler = ErrorHandler.getInstance();
     }
 
     /**
-     * Create new code files in appropriate directories
+     * Create new code files in appropriate directories with comprehensive error handling
      * Requirement 8.1: Generate new files with appropriate names and extensions within current workspace
+     * Requirement 8.2: Handle file I/O operations safely without overwriting existing files without confirmation
      */
     async createCodeFile(
         fileName: string, 
@@ -102,30 +106,69 @@ export class FileOperationsManager {
         options: FileCreationOptions = {}
     ): Promise<FileCreationResult> {
         try {
-            // Validate workspace
-            const workspaceRoot = this.workspaceManager.getWorkspaceRoot();
-            if (!workspaceRoot) {
+            // Validate inputs
+            if (!fileName || fileName.trim().length === 0) {
+                const validationError = this.errorHandler.handleValidationError(
+                    ['File name cannot be empty'],
+                    'File creation'
+                );
                 return {
                     success: false,
                     filePath: fileName,
                     created: false,
                     overwritten: false,
-                    error: 'No workspace is currently open'
+                    error: validationError.userMessage
+                };
+            }
+
+            // Validate file name
+            const fileNameValidation = this.validateFileName(fileName);
+            if (!fileNameValidation.isValid) {
+                const validationError = this.errorHandler.handleValidationError(
+                    fileNameValidation.errors,
+                    'File name validation'
+                );
+                return {
+                    success: false,
+                    filePath: fileName,
+                    created: false,
+                    overwritten: false,
+                    error: validationError.userMessage
+                };
+            }
+
+            // Validate workspace
+            const workspaceRoot = this.workspaceManager.getWorkspaceRoot();
+            if (!workspaceRoot) {
+                const configError = this.errorHandler.handleConfigurationError(
+                    'workspace',
+                    'No workspace is currently open'
+                );
+                return {
+                    success: false,
+                    filePath: fileName,
+                    created: false,
+                    overwritten: false,
+                    error: configError.userMessage
                 };
             }
 
             // Determine appropriate file location
             const suggestedLocation = this.determineFileLocation(fileName);
-            const fullPath = path.join(workspaceRoot, suggestedLocation);
+            const fullPath = path.resolve(workspaceRoot, suggestedLocation);
 
-            // Validate path is within workspace boundary
+            // Validate path is within workspace boundary (security check)
             if (!this.workspaceManager.isPathWithinWorkspace(fullPath)) {
+                const securityError = this.errorHandler.handleSecurityError(
+                    'File path is outside workspace boundary',
+                    { fileName, suggestedLocation, workspaceRoot }
+                );
                 return {
                     success: false,
                     filePath: fullPath,
                     created: false,
                     overwritten: false,
-                    error: 'File path is outside workspace boundary'
+                    error: securityError.userMessage
                 };
             }
 
@@ -156,11 +199,14 @@ export class FileOperationsManager {
                 await this.ensureDirectoryExists(path.dirname(fullPath));
             }
 
-            // Write file with safe I/O
+            // Write file with safe I/O and comprehensive error handling
             await this.writeFileSafely(fullPath, content, options.encoding || 'utf-8');
 
             // Open the created file in VS Code
             await this.openFileInEditor(fullPath);
+
+            // Log successful operation
+            console.log(`Successfully created file: ${fullPath}`);
 
             return {
                 success: true,
@@ -170,12 +216,23 @@ export class FileOperationsManager {
             };
 
         } catch (error) {
+            const fileError = this.errorHandler.handleFileOperationError(
+                error,
+                'create file',
+                fileName
+            );
+
+            // Display error to user if it's severe
+            if (fileError.severity === ErrorSeverity.HIGH || fileError.severity === ErrorSeverity.CRITICAL) {
+                await this.errorHandler.displayError(fileError);
+            }
+
             return {
                 success: false,
                 filePath: fileName,
                 created: false,
                 overwritten: false,
-                error: `Failed to create file: ${error instanceof Error ? error.message : 'Unknown error'}`
+                error: fileError.userMessage
             };
         }
     }
@@ -214,46 +271,95 @@ export class FileOperationsManager {
         content: string, 
         encoding: BufferEncoding = 'utf-8'
     ): Promise<void> {
+        let backupPath: string | null = null;
+        
         try {
+            // Validate content size to prevent DoS
+            const contentSize = Buffer.byteLength(content, encoding);
+            const maxFileSize = 50 * 1024 * 1024; // 50MB limit
+            
+            if (contentSize > maxFileSize) {
+                throw new Error(`File content too large: ${contentSize} bytes (max: ${maxFileSize} bytes)`);
+            }
+
             // Create a backup if file exists
             const fileExists = await this.fileExists(filePath);
             if (fileExists) {
-                await this.createBackup(filePath);
+                backupPath = await this.createBackup(filePath);
             }
 
-            // Write the file
-            await fs.writeFile(filePath, content, { encoding });
+            // Ensure parent directory exists
+            const parentDir = path.dirname(filePath);
+            await this.ensureDirectoryExists(parentDir);
 
-            // Verify the write was successful
-            const writtenContent = await fs.readFile(filePath, { encoding });
-            if (writtenContent !== content) {
-                throw new Error('File content verification failed after write');
+            // Write the file atomically (write to temp file first, then rename)
+            const tempPath = `${filePath}.tmp.${Date.now()}`;
+            
+            try {
+                await fs.writeFile(tempPath, content, { encoding, mode: 0o644 });
+                
+                // Verify the write was successful
+                const writtenContent = await fs.readFile(tempPath, { encoding });
+                if (writtenContent !== content) {
+                    throw new Error('File content verification failed after write');
+                }
+                
+                // Atomic rename
+                await fs.rename(tempPath, filePath);
+                
+                // Clean up backup if write was successful
+                if (backupPath) {
+                    await fs.unlink(backupPath).catch(() => {}); // Ignore cleanup errors
+                }
+                
+            } catch (writeError) {
+                // Clean up temp file
+                await fs.unlink(tempPath).catch(() => {}); // Ignore cleanup errors
+                throw writeError;
             }
 
         } catch (error) {
             // If write failed and we created a backup, restore it
-            const backupPath = `${filePath}.backup`;
-            if (await this.fileExists(backupPath)) {
+            if (backupPath && await this.fileExists(backupPath)) {
                 try {
                     await fs.copyFile(backupPath, filePath);
                     await fs.unlink(backupPath);
+                    console.log(`Restored backup for ${filePath}`);
                 } catch (restoreError) {
                     console.error('Failed to restore backup:', restoreError);
+                    // Don't throw here, let the original error propagate
                 }
             }
-            throw error;
+            
+            // Enhance error with context
+            const fileError = this.errorHandler.handleFileOperationError(
+                error,
+                'write file safely',
+                filePath
+            );
+            throw new Error(fileError.technicalMessage);
         }
     }
 
     /**
      * Create a backup of existing file before overwriting
      */
-    private async createBackup(filePath: string): Promise<void> {
-        const backupPath = `${filePath}.backup`;
+    private async createBackup(filePath: string): Promise<string> {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = `${filePath}.backup.${timestamp}`;
+        
         try {
             await fs.copyFile(filePath, backupPath);
+            console.log(`Created backup: ${backupPath}`);
+            return backupPath;
         } catch (error) {
-            console.warn(`Failed to create backup for ${filePath}:`, error);
+            const backupError = this.errorHandler.handleFileOperationError(
+                error,
+                'create backup',
+                filePath
+            );
+            console.warn(`Failed to create backup for ${filePath}:`, backupError.technicalMessage);
+            throw new Error(`Backup creation failed: ${backupError.userMessage}`);
         }
     }
 

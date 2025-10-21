@@ -8,6 +8,7 @@ import os
 import asyncio
 import json
 import logging
+import traceback
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
@@ -19,8 +20,16 @@ import uvicorn
 import redis.asyncio as redis
 import httpx
 
-# Import the new riverboat system
-from party_box import RiverboatSystem, SecurityValidationError, RiverboatProcessingError
+# Import the new riverboat system and error handling
+from party_box import RiverboatSystem
+from party_box.error_handler import (
+    error_handler, 
+    SecurityValidationError, 
+    PartyBoxValidationError, 
+    RiverboatProcessingError,
+    ErrorType,
+    ErrorSeverity
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -583,69 +592,344 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint with comprehensive API documentation"""
     return {
         "message": "CampfireValley MCP Server", 
-        "version": "1.0.0",
-        "endpoints": ["/mcp", "/health"]
+        "version": "2.0.0",
+        "features": [
+            "Comprehensive error handling",
+            "Security validation",
+            "Rate limiting",
+            "Request monitoring"
+        ],
+        "endpoints": {
+            "core": [
+                "/mcp",
+                "/health"
+            ],
+            "party_box": [
+                "/party-box/{id}",
+                "/party-box/{id}/status",
+                "/party-box/{id}/context"
+            ],
+            "storage": [
+                "/storage/stats",
+                "/storage/cleanup"
+            ],
+            "monitoring": [
+                "/errors/statistics",
+                "/errors/export",
+                "/errors/clear",
+                "/security/status"
+            ]
+        },
+        "timestamp": datetime.now().isoformat()
     }
 
 @app.post("/mcp")
 async def handle_mcp_request(request: Request):
     """
-    Main MCP endpoint for handling Party Box requests
+    Enhanced MCP endpoint with comprehensive error handling
     Implements Party Box protocol parsing and validation
+    Requirements: 12.3, 12.7, 13.7
     """
+    request_start_time = datetime.now()
+    client_ip = request.client.host if request.client else "unknown"
+    
     try:
-        # Parse request body
+        # Log incoming request
+        logger.info(f"MCP request from {client_ip} at {request_start_time.isoformat()}")
+        
+        # Parse and validate request body
         body = await request.body()
         if not body:
-            raise HTTPException(status_code=400, detail="Empty request body")
+            validation_error = error_handler.handle_party_box_validation_error(
+                ["Empty request body"],
+                None
+            )
+            raise HTTPException(
+                status_code=400, 
+                detail=validation_error.user_message
+            )
         
-        # Parse JSON
+        # Check request size
+        body_size = len(body)
+        max_request_size = 100 * 1024 * 1024  # 100MB
+        if body_size > max_request_size:
+            size_error = error_handler.handle_resource_error(
+                "request_size",
+                f"Request size {body_size} bytes exceeds maximum {max_request_size} bytes"
+            )
+            raise HTTPException(
+                status_code=413,
+                detail=size_error.user_message
+            )
+        
+        # Parse JSON with error handling
         try:
             request_data = json.loads(body)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+            json_error = error_handler.handle_party_box_validation_error(
+                [f"Invalid JSON format: {str(e)}"],
+                {"body_preview": body[:200].decode('utf-8', errors='ignore')}
+            )
+            raise HTTPException(
+                status_code=400, 
+                detail=json_error.user_message
+            )
         
-        # Validate Party Box structure
+        # Validate Party Box structure with comprehensive error handling
         try:
             party_box = PartyBox(**request_data)
         except ValidationError as e:
-            logger.error(f"Party Box validation failed: {str(e)}")
+            validation_errors = []
+            for error in e.errors():
+                field = " -> ".join(str(loc) for loc in error['loc'])
+                validation_errors.append(f"{field}: {error['msg']}")
+            
+            structure_error = error_handler.handle_party_box_validation_error(
+                validation_errors,
+                {"request_keys": list(request_data.keys()) if isinstance(request_data, dict) else None}
+            )
+            
+            logger.warning(f"Party Box validation failed from {client_ip}: {validation_errors}")
             raise HTTPException(
                 status_code=400, 
-                detail=f"Invalid Party Box structure: {str(e)}"
+                detail=structure_error.user_message
             )
         
-        # Log incoming request
-        logger.info(f"Received Party Box - Claim: {party_box.torch.claim}, Task: {party_box.torch.task}")
+        # Log successful parsing
+        logger.info(f"Successfully parsed Party Box - Claim: {party_box.torch.claim}, Task: {party_box.torch.task[:100]}...")
         
-        # Process through riverboat system
-        response = await riverboat.receive_party_box(party_box)
-        
-        return JSONResponse(content=response)
+        # Process through riverboat system with timeout
+        try:
+            response = await asyncio.wait_for(
+                riverboat.receive_party_box(party_box),
+                timeout=300.0  # 5 minute timeout
+            )
+            
+            # Log successful processing
+            processing_time = (datetime.now() - request_start_time).total_seconds()
+            logger.info(f"Successfully processed Party Box from {client_ip} in {processing_time:.2f}s")
+            
+            return JSONResponse(content=response)
+            
+        except asyncio.TimeoutError:
+            timeout_error = error_handler.handle_timeout_error(
+                "party_box_processing",
+                300.0,
+                {"client_ip": client_ip, "claim": party_box.torch.claim}
+            )
+            logger.error(f"Processing timeout for {client_ip}: {timeout_error.technical_message}")
+            raise HTTPException(
+                status_code=504,
+                detail=timeout_error.user_message
+            )
         
     except SecurityValidationError as e:
-        logger.warning(f"Security validation failed: {str(e)}")
-        raise HTTPException(
+        security_error = error_handler.handle_security_validation_error(
+            e.validation_type,
+            str(e),
+            e.details
+        )
+        logger.critical(f"Security validation failed from {client_ip}: {security_error.technical_message}")
+        
+        return JSONResponse(
+            status_code=403,
+            content=security_error.to_response_format()
+        )
+        
+    except PartyBoxValidationError as e:
+        validation_error = error_handler.handle_party_box_validation_error(
+            e.validation_errors,
+            e.party_box_data
+        )
+        logger.warning(f"Party Box validation failed from {client_ip}: {validation_error.technical_message}")
+        
+        return JSONResponse(
             status_code=400,
-            detail=f"Security validation failed: {str(e)}"
+            content=validation_error.to_response_format()
         )
+        
     except RiverboatProcessingError as e:
-        logger.error(f"Riverboat processing error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Processing error: {str(e)}"
+        processing_error = error_handler.handle_processing_error(
+            e.component,
+            e.operation,
+            e.original_error or Exception(str(e)),
+            {"client_ip": client_ip}
         )
-    except HTTPException:
+        logger.error(f"Processing error from {client_ip}: {processing_error.technical_message}")
+        
+        return JSONResponse(
+            status_code=500,
+            content=processing_error.to_response_format()
+        )
+        
+    except HTTPException as e:
+        # Re-raise HTTP exceptions as-is
+        logger.warning(f"HTTP exception from {client_ip}: {e.status_code} - {e.detail}")
         raise
+        
     except Exception as e:
-        logger.error(f"Unexpected error in MCP endpoint: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error"
+        # Handle unexpected errors
+        unexpected_error = error_handler.create_error(
+            ErrorType.UNKNOWN,
+            "UNEXPECTED_MCP_ERROR",
+            f"Unexpected error in MCP endpoint: {str(e)}",
+            {
+                "client_ip": client_ip,
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc()
+            },
+            ErrorSeverity.CRITICAL
         )
+        
+        logger.critical(f"Unexpected error from {client_ip}: {unexpected_error.technical_message}")
+        
+        return JSONResponse(
+            status_code=500,
+            content=unexpected_error.to_response_format()
+        )
+
+@app.get("/party-box/{party_box_id}")
+async def get_party_box(party_box_id: str):
+    """Get Party Box data by ID"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        party_box_data = await riverboat.get_party_box(party_box_id)
+        if party_box_data:
+            return JSONResponse(content=party_box_data)
+        else:
+            raise HTTPException(status_code=404, detail="Party Box not found")
+            
+    except Exception as e:
+        logger.error(f"Error retrieving Party Box {party_box_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/party-box/{party_box_id}/status")
+async def get_party_box_status(party_box_id: str):
+    """Get Party Box status by ID"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        status = await riverboat.get_party_box_status(party_box_id)
+        if status:
+            return JSONResponse(content=status)
+        else:
+            raise HTTPException(status_code=404, detail="Party Box not found")
+            
+    except Exception as e:
+        logger.error(f"Error getting Party Box status {party_box_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/party-box/{party_box_id}/context")
+async def get_party_box_context(party_box_id: str):
+    """Get Party Box context information"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        context_info = await riverboat.get_context_info(party_box_id)
+        if context_info:
+            return JSONResponse(content=context_info)
+        else:
+            raise HTTPException(status_code=404, detail="Context not found")
+            
+    except Exception as e:
+        logger.error(f"Error getting context for Party Box {party_box_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/storage/stats")
+async def get_storage_stats():
+    """Get storage statistics"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        stats = await riverboat.get_storage_stats()
+        return JSONResponse(content=stats)
+        
+    except Exception as e:
+        logger.error(f"Error getting storage stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/storage/cleanup")
+async def cleanup_storage(max_age_days: int = 1):
+    """Clean up old Party Box files"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        cleaned_count = await riverboat.cleanup_old_party_boxes(max_age_days)
+        return JSONResponse(content={
+            "message": f"Cleaned up {cleaned_count} old Party Box files",
+            "cleaned_count": cleaned_count
+        })
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up storage: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/errors/statistics")
+async def get_error_statistics():
+    """Get comprehensive error statistics"""
+    try:
+        stats = error_handler.get_error_statistics()
+        return JSONResponse(content={
+            "error_statistics": stats,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting error statistics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/errors/clear")
+async def clear_error_history():
+    """Clear error history (admin endpoint)"""
+    try:
+        error_handler.clear_error_history()
+        return JSONResponse(content={
+            "message": "Error history cleared successfully",
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error clearing error history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/errors/export")
+async def export_error_history():
+    """Export error history for debugging"""
+    try:
+        error_export = error_handler.export_error_history()
+        return JSONResponse(content={
+            "error_history": json.loads(error_export),
+            "exported_at": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error exporting error history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/security/status")
+async def get_security_status():
+    """Get security validation status and metrics"""
+    try:
+        stats = error_handler.get_error_statistics()
+        security_errors = stats["by_type"].get("security_validation", 0)
+        
+        return JSONResponse(content={
+            "security_status": "operational" if security_errors < 10 else "elevated",
+            "security_errors_count": security_errors,
+            "total_errors": stats["total_errors"],
+            "last_security_incident": None,  # Would be implemented with proper tracking
+            "security_level": "high",
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting security status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError):

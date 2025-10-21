@@ -13,6 +13,8 @@ from pathlib import Path
 
 from .processing_campfires import UnloadingCampfire, SecurityCampfire, OffloadingCampfire
 from .devteam_campfire import DevTeamCampfire
+from .storage_manager import PartyBoxStorageManager
+from .context_manager import ContextManager, FileAttachment, ContextInfo
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +29,19 @@ class RiverboatSystem:
         self.redis_conn = redis_conn
         self.ollama_client = ollama_client
         
+        # Initialize storage manager
+        self.storage_manager = PartyBoxStorageManager(party_box_storage)
+        
+        # Initialize context manager
+        self.context_manager = ContextManager(party_box_storage)
+        
         # Initialize processing campfires
         self.unloading_campfire = UnloadingCampfire()
         self.security_campfire = SecurityCampfire()
         self.offloading_campfire = OffloadingCampfire()
         self.devteam_campfire = DevTeamCampfire(ollama_client)
         
-        logger.info("Riverboat system initialized with processing campfires")
+        logger.info("Riverboat system initialized with processing campfires, storage manager, and context manager")
     
     async def receive_party_box(self, party_box) -> Dict[str, Any]:
         """
@@ -42,8 +50,13 @@ class RiverboatSystem:
         Requirements: 12.1, 12.6
         """
         try:
-            # Store incoming Party Box
-            party_box_id = await self._store_party_box(party_box, "incoming")
+            # Store incoming Party Box using storage manager
+            party_box_data = party_box.model_dump() if hasattr(party_box, 'model_dump') else party_box
+            party_box_id = await self.storage_manager.store_party_box(party_box_data, "incoming")
+            
+            # Process and store context and attachments
+            await self._process_party_box_context(party_box_id, party_box)
+            
             logger.info(f"Received Party Box {party_box_id} - Claim: {party_box.torch.claim}")
             
             # Check for cached response
@@ -97,8 +110,8 @@ class RiverboatSystem:
             # Cache the response
             await self._cache_response(cache_key, response, ttl=1800)  # 30 minutes
             
-            # Store response Party Box
-            await self._store_party_box(response, "outgoing", party_box_id)
+            # Store response Party Box using storage manager
+            await self.storage_manager.store_party_box(response, "outgoing", party_box_id)
             
             # Publish completion to Redis
             await self._publish_message("party_box_completed", {
@@ -126,36 +139,17 @@ class RiverboatSystem:
             
             raise RiverboatProcessingError(f"Riverboat processing failed: {str(e)}")
     
-    async def _store_party_box(self, party_box: Any, direction: str, party_box_id: str = None) -> str:
+    async def get_party_box(self, party_box_id: str) -> Optional[Dict[str, Any]]:
         """
-        Store Party Box to filesystem for persistence
-        Requirements: 9.6, 8.4
+        Retrieve Party Box data by ID using storage manager
         """
-        if party_box_id is None:
-            party_box_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        
-        filename = f"{direction}_{party_box_id}.json"
-        filepath = self.party_box_storage / filename
-        
-        # Convert to dict if it's a Pydantic model
-        if hasattr(party_box, 'model_dump'):
-            data = party_box.model_dump()
-        else:
-            data = party_box
-            
-        # Add storage metadata
-        data["storage_metadata"] = {
-            "stored_at": datetime.now().isoformat(),
-            "direction": direction,
-            "party_box_id": party_box_id,
-            "file_path": str(filepath)
-        }
-            
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
-            
-        logger.info(f"Stored Party Box: {filename}")
-        return party_box_id
+        return await self.storage_manager.retrieve_party_box(party_box_id)
+    
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        """
+        Get storage statistics using storage manager
+        """
+        return await self.storage_manager.get_storage_stats()
     
     async def _get_cached_response(self, key: str) -> Optional[Dict[str, Any]]:
         """Get cached response from Redis"""
@@ -183,46 +177,124 @@ class RiverboatSystem:
             logger.warning(f"Failed to publish message to {channel}: {str(e)}")
     
     async def get_party_box_status(self, party_box_id: str) -> Optional[Dict[str, Any]]:
-        """Get status of a specific Party Box by ID"""
+        """Get status of a specific Party Box by ID using storage manager"""
         try:
-            # Check for incoming Party Box
-            incoming_path = self.party_box_storage / f"incoming_{party_box_id}.json"
-            outgoing_path = self.party_box_storage / f"outgoing_{party_box_id}.json"
-            
-            status = {
-                "party_box_id": party_box_id,
-                "incoming_exists": incoming_path.exists(),
-                "outgoing_exists": outgoing_path.exists(),
-                "status": "unknown"
-            }
-            
-            if status["outgoing_exists"]:
-                status["status"] = "completed"
-            elif status["incoming_exists"]:
-                status["status"] = "processing"
-            
-            return status
+            metadata = await self.storage_manager.get_metadata(party_box_id)
+            if metadata:
+                return {
+                    "party_box_id": party_box_id,
+                    "direction": metadata.direction,
+                    "timestamp": metadata.timestamp.isoformat(),
+                    "claim_type": metadata.claim_type,
+                    "task_summary": metadata.task_summary,
+                    "file_size": metadata.file_size,
+                    "attachments_count": metadata.attachments_count,
+                    "status": "completed" if metadata.direction == "outgoing" else "processing"
+                }
+            return None
             
         except Exception as e:
             logger.error(f"Error getting Party Box status: {str(e)}")
             return None
     
-    async def cleanup_old_party_boxes(self, max_age_hours: int = 24):
-        """Clean up old Party Box files to prevent storage bloat"""
+    async def _process_party_box_context(self, party_box_id: str, party_box) -> bool:
+        """
+        Process and store Party Box context and attachments
+        Implements requirements 3.3 and 11.5
+        """
         try:
-            cutoff_time = datetime.now().timestamp() - (max_age_hours * 3600)
-            cleaned_count = 0
+            torch_data = party_box.torch if hasattr(party_box, 'torch') else party_box.get('torch', {})
             
-            for file_path in self.party_box_storage.glob("*.json"):
-                if file_path.stat().st_mtime < cutoff_time:
-                    file_path.unlink()
-                    cleaned_count += 1
+            # Create context information
+            context = self.context_manager.create_context_info(
+                current_file=torch_data.get('context', {}).get('current_file'),
+                project_structure=torch_data.get('context', {}).get('project_structure', []),
+                terminal_history=torch_data.get('context', {}).get('terminal_history', []),
+                workspace_root=torch_data.get('workspace_root', ''),
+                os_type=torch_data.get('os', 'linux'),
+                environment_vars=torch_data.get('context', {}).get('environment_vars', {})
+            )
             
+            # Process file attachments
+            attachments = []
+            torch_attachments = torch_data.get('attachments', [])
+            
+            for attachment_data in torch_attachments:
+                # Validate attachment data
+                if not all(key in attachment_data for key in ['path', 'content']):
+                    logger.warning(f"Invalid attachment data in Party Box {party_box_id}")
+                    continue
+                
+                # Create file attachment with metadata
+                attachment = self.context_manager.create_file_attachment(
+                    file_path=attachment_data['path'],
+                    content=attachment_data['content'],
+                    content_type=attachment_data.get('type'),
+                    timestamp=datetime.fromisoformat(attachment_data['timestamp']) if 'timestamp' in attachment_data else None
+                )
+                
+                # Validate attachment for security
+                validation_errors = self.context_manager.validate_attachment(attachment)
+                if validation_errors:
+                    logger.warning(f"Attachment validation failed for {attachment.path}: {validation_errors}")
+                    continue
+                
+                attachments.append(attachment)
+            
+            # Store context and attachments
+            await self.context_manager.store_context(party_box_id, context, attachments)
+            
+            logger.info(f"Processed context for Party Box {party_box_id}: {len(attachments)} attachments")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to process context for Party Box {party_box_id}: {str(e)}")
+            return False
+    
+    async def get_context_info(self, party_box_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve context information for a Party Box
+        """
+        try:
+            context_data = await self.context_manager.retrieve_context(party_box_id)
+            if context_data:
+                context, attachments = context_data
+                return {
+                    "context": {
+                        "current_file": context.current_file,
+                        "project_structure": context.project_structure,
+                        "terminal_history": context.terminal_history,
+                        "workspace_root": context.workspace_root,
+                        "os_type": context.os_type,
+                        "environment_vars": context.environment_vars
+                    },
+                    "attachments": [
+                        {
+                            "path": att.path,
+                            "content_type": att.content_type,
+                            "size": att.size,
+                            "timestamp": att.timestamp.isoformat(),
+                            "checksum": att.checksum
+                        }
+                        for att in attachments
+                    ]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get context info for Party Box {party_box_id}: {str(e)}")
+            return None
+    
+    async def cleanup_old_party_boxes(self, max_age_days: int = 1):
+        """Clean up old Party Box files using storage manager"""
+        try:
+            cleaned_count = await self.storage_manager.cleanup_old_party_boxes(max_age_days)
             if cleaned_count > 0:
                 logger.info(f"Cleaned up {cleaned_count} old Party Box files")
+            return cleaned_count
                 
         except Exception as e:
             logger.error(f"Error cleaning up Party Box files: {str(e)}")
+            return 0
 
 
 class SecurityValidationError(Exception):

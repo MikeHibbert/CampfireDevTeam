@@ -14,6 +14,8 @@ from .processing_campfires import (
     OffloadingError
 )
 from .devteam_campfire import DevTeamCampfire, DevTeamProcessingError
+from .storage_manager import PartyBoxStorageManager, StorageMetadata
+from .context_manager import ContextManager, FileAttachment, ContextInfo
 
 __all__ = [
     'RiverboatSystem',
@@ -21,6 +23,11 @@ __all__ = [
     'SecurityCampfire', 
     'OffloadingCampfire',
     'DevTeamCampfire',
+    'PartyBoxStorageManager',
+    'StorageMetadata',
+    'ContextManager',
+    'FileAttachment',
+    'ContextInfo',
     'SecurityValidationError',
     'RiverboatProcessingError',
     'UnloadingError',
