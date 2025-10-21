@@ -1,0 +1,18 @@
+# CampfireValley Backend Dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+redis==5.0.1
+httpx==0.25.2
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# Additional dependencies for Docker networking and Ollama integration
+redis[hiredis]==5.0.1
+
+# CampfireValley framework (placeholder - would be actual package)
+# campfirevalley==1.0.0
+
+# Development dependencies
+pytest==7.4.3
+pytest-asyncio==0.21.1

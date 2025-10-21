@@ -1,0 +1,71 @@
+{
+  "name": "campfire-dev-agent",
+  "displayName": "CampfireDevAgent",
+  "description": "AI-driven development assistant that integrates with CampfireValley backend",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:campfire.generateCode",
+    "onCommand:campfire.reviewCode"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "campfire.generateCode",
+        "title": "Campfire: Generate Code"
+      },
+      {
+        "command": "campfire.reviewCode",
+        "title": "Campfire: Review Code"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "campfire.generateCode",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g"
+      },
+      {
+        "command": "campfire.reviewCode",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r"
+      }
+    ],
+    "configuration": {
+      "title": "Campfire",
+      "properties": {
+        "campfire.mcpServer": {
+          "type": "string",
+          "default": "http://localhost:8080/mcp",
+          "description": "MCP server URL for CampfireValley backend"
+        },
+        "campfire.partyBoxPath": {
+          "type": "string",
+          "default": "./party_box",
+          "description": "Path to Party Box storage directory"
+        },
+        "campfire.defaultPrompt": {
+          "type": "string",
+          "default": "Build code for {task} on {os}",
+          "description": "Default prompt template for code generation"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.4"
+  }
+}
