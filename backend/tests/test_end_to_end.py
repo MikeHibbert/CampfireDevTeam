@@ -27,8 +27,16 @@ class TestEndToEndWorkflows:
     def setup_method(self):
         """Setup test client and components"""
         self.client = TestClient(app)
-        self.riverboat = RiverboatSystem()
-        self.devteam = DevTeamCampfire()
+        
+        # Mock dependencies for RiverboatSystem
+        from unittest.mock import MagicMock
+        mock_redis = MagicMock()
+        mock_ollama = MagicMock()
+        mock_storage_path = Path("/tmp/test_party_box")
+        mock_manifests_path = Path("/tmp/test_manifests")
+        
+        self.riverboat = RiverboatSystem(mock_redis, mock_ollama, mock_storage_path, mock_manifests_path)
+        self.devteam = DevTeamCampfire(mock_ollama)
     
     async def test_complete_code_generation_workflow(self):
         """Test complete code generation from request to response"""
@@ -255,9 +263,8 @@ class TestEndToEndWorkflows:
             }
         }
         
-        # Mock the riverboat system for fast response
-        with patch('mcp_server.RiverboatSystem') as mock_riverboat_class:
-            mock_riverboat = mock_riverboat_class.return_value
+        # Mock the global riverboat variable for fast response
+        with patch('mcp_server.riverboat') as mock_riverboat:
             mock_riverboat.receive_party_box = AsyncMock(return_value={
                 "torch": {"content": "def hello(): print('Hello')"}
             })

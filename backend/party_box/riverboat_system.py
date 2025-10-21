@@ -8,7 +8,7 @@ import os
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from .processing_campfires import UnloadingCampfire, SecurityCampfire, OffloadingCampfire

@@ -1,0 +1,12 @@
+{
+  "party_box_id": "20251021_100659_494326_bbb2f1b4",
+  "direction": "outgoing",
+  "timestamp": "2025-10-21 10:06:59.608631+00:00",
+  "file_size": 5232,
+  "checksum": "6637f6df32cfe38c44af1dbd0a497325",
+  "workspace_root": "",
+  "claim_type": "response",
+  "task_summary": "processed_response",
+  "attachments_count": 0,
+  "storage_path": "outgoing/20251021_100659_494326_bbb2f1b4.json"
+}
