@@ -541,11 +541,23 @@ async def startup_event():
         await redis_conn.connect()
         ollama_available = await ollama_client.health_check()
         
-        # Initialize the new riverboat system
-        riverboat = RiverboatSystem(redis_conn, ollama_client, PARTY_BOX_PATH)
+        # Initialize the generic riverboat system with manifest loading
+        manifests_directory = Path("/app/manifests")  # Look for manifests in mounted manifests directory
+        riverboat = RiverboatSystem(redis_conn, ollama_client, PARTY_BOX_PATH, manifests_directory)
+        
+        # Load campfires from manifest files
+        await riverboat.initialize_campfires()
         
         logger.info(f"Startup complete - Ollama available: {ollama_available}")
-        logger.info("Riverboat system initialized with enhanced processing campfires")
+        logger.info(f"Riverboat system initialized with {len(riverboat.get_available_campfires())} campfires")
+        
+        # Log available campfires
+        available_campfires = riverboat.get_available_campfires()
+        if available_campfires:
+            logger.info(f"Available campfires: {', '.join(available_campfires)}")
+        else:
+            logger.warning("No campfires loaded - using fallback processing")
+            
     except Exception as e:
         logger.error(f"Startup error: {str(e)}")
 
@@ -561,7 +573,7 @@ async def shutdown_event():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with Redis and Ollama status"""
+    """Health check endpoint with Redis, Ollama, and campfire status"""
     # Check Redis connection
     redis_status = "disconnected"
     try:
@@ -574,9 +586,28 @@ async def health_check():
     # Check Ollama connection
     ollama_status = "available" if await ollama_client.health_check() else "unavailable"
     
+    # Check campfire status
+    campfire_status = {
+        "available_campfires": [],
+        "active_campfire": None,
+        "total_count": 0
+    }
+    
+    if riverboat:
+        try:
+            available_campfires = riverboat.get_available_campfires()
+            campfire_status = {
+                "available_campfires": available_campfires,
+                "active_campfire": riverboat.active_campfire.name if riverboat.active_campfire else None,
+                "total_count": len(available_campfires)
+            }
+        except Exception as e:
+            logger.warning(f"Error getting campfire status: {str(e)}")
+    
     return {
         "status": "healthy", 
         "service": "campfire-backend",
+        "version": "2.0.0-generic",
         "party_box_path": str(PARTY_BOX_PATH),
         "connections": {
             "redis": {
@@ -587,16 +618,21 @@ async def health_check():
                 "url": OLLAMA_URL,
                 "status": ollama_status
             }
-        }
+        },
+        "campfires": campfire_status
     }
 
 @app.get("/")
 async def root():
     """Root endpoint with comprehensive API documentation"""
     return {
-        "message": "CampfireValley MCP Server", 
-        "version": "2.0.0",
+        "message": "CampfireValley Generic MCP Server", 
+        "version": "2.0.0-generic",
+        "description": "Generic configuration-driven campfire engine for CampfireValley",
         "features": [
+            "Dynamic campfire loading from manifest files",
+            "Generic camper configuration system",
+            "Workflow-based processing",
             "Comprehensive error handling",
             "Security validation",
             "Rate limiting",
@@ -606,6 +642,12 @@ async def root():
             "core": [
                 "/mcp",
                 "/health"
+            ],
+            "campfires": [
+                "/campfires",
+                "/campfires/{name}",
+                "/campfires/{name}/activate",
+                "/campfires/reload"
             ],
             "party_box": [
                 "/party-box/{id}",
@@ -622,6 +664,12 @@ async def root():
                 "/errors/clear",
                 "/security/status"
             ]
+        },
+        "architecture": {
+            "type": "generic_engine",
+            "configuration_driven": True,
+            "manifest_based": True,
+            "dynamic_loading": True
         },
         "timestamp": datetime.now().isoformat()
     }
@@ -929,6 +977,113 @@ async def get_security_status():
         })
     except Exception as e:
         logger.error(f"Error getting security status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/campfires")
+async def list_campfires():
+    """List all available campfires"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        available_campfires = riverboat.get_available_campfires()
+        active_campfire = riverboat.active_campfire.name if riverboat.active_campfire else None
+        
+        return JSONResponse(content={
+            "available_campfires": available_campfires,
+            "active_campfire": active_campfire,
+            "total_count": len(available_campfires),
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error listing campfires: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/campfires/{campfire_name}")
+async def get_campfire_info(campfire_name: str):
+    """Get detailed information about a specific campfire"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        campfire = riverboat.campfire_registry.get_campfire(campfire_name)
+        if not campfire:
+            raise HTTPException(status_code=404, detail=f"Campfire not found: {campfire_name}")
+        
+        return JSONResponse(content={
+            "name": campfire.name,
+            "type": campfire.campfire_type,
+            "max_concurrent_tasks": campfire.max_concurrent_tasks,
+            "response_timeout": campfire.response_timeout,
+            "campers": [
+                {
+                    "role": role,
+                    "specializations": camper.specializations,
+                    "confidence_threshold": camper.confidence_threshold
+                }
+                for role, camper in campfire.campers.items()
+            ],
+            "workflows": list(campfire.workflows.keys()),
+            "security_enabled": campfire.security_config.get("enableSecurityValidation", False),
+            "is_active": riverboat.active_campfire and riverboat.active_campfire.name == campfire_name
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting campfire info: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/campfires/{campfire_name}/activate")
+async def activate_campfire(campfire_name: str):
+    """Activate a specific campfire"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        success = riverboat.set_active_campfire(campfire_name)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Campfire not found: {campfire_name}")
+        
+        return JSONResponse(content={
+            "message": f"Campfire '{campfire_name}' activated successfully",
+            "active_campfire": campfire_name,
+            "timestamp": datetime.now().isoformat()
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error activating campfire: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/campfires/reload")
+async def reload_campfires():
+    """Reload all campfires from manifest files"""
+    try:
+        if not riverboat:
+            raise HTTPException(status_code=503, detail="Riverboat system not initialized")
+        
+        # Store current active campfire name
+        current_active = riverboat.active_campfire.name if riverboat.active_campfire else None
+        
+        # Reload campfires
+        await riverboat.initialize_campfires()
+        
+        # Try to restore previous active campfire
+        if current_active and current_active in riverboat.get_available_campfires():
+            riverboat.set_active_campfire(current_active)
+        
+        available_campfires = riverboat.get_available_campfires()
+        active_campfire = riverboat.active_campfire.name if riverboat.active_campfire else None
+        
+        return JSONResponse(content={
+            "message": "Campfires reloaded successfully",
+            "available_campfires": available_campfires,
+            "active_campfire": active_campfire,
+            "total_count": len(available_campfires),
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error reloading campfires: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.exception_handler(ValidationError)

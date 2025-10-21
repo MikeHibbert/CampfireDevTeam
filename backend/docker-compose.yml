@@ -9,6 +9,7 @@ services:
     volumes:
       - "./party_box:/app/party_box"
       - "./logs:/app/logs"
+      - "./manifests:/app/manifests"
     environment:
       - OLLAMA_URL=http://host.docker.internal:11434
       - REDIS_URL=redis://redis:6379

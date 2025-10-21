@@ -1,0 +1,144 @@
+# Simple Assistant Campfire Manifest
+# Example of a minimal campfire configuration for basic assistance
+
+apiVersion: campfire.valley/v1
+kind: CampfireManifest
+metadata:
+  name: simple-assistant
+  version: "1.0.0"
+  description: "Simple assistant campfire with basic AI helper"
+  created: "2025-10-21"
+  
+spec:
+  campfire:
+    name: "SimpleAssistant"
+    type: "assistant"
+    maxConcurrentTasks: 3
+    responseTimeout: 20000  # 20 seconds
+    
+  # Ollama Configuration
+  ollama:
+    url: "http://host.docker.internal:11434"
+    defaultModel: "llama2:7b"
+    fallbackModel: "codellama:7b"
+    healthCheckInterval: 30
+    maxRetries: 2
+    
+  # Redis Configuration
+  redis:
+    url: "redis://redis:6379"
+    database: 1
+    keyPrefix: "campfire:simple:"
+    sessionTimeout: 1800  # 30 minutes
+    
+  # Storage Configuration
+  storage:
+    partyBoxPath: "/app/party_box"
+    maxFileSize: 5242880  # 5MB
+    allowedFileTypes:
+      - ".txt"
+      - ".md"
+      - ".json"
+      - ".py"
+      - ".js"
+    retentionDays: 7
+    
+  # Simple Campers Configuration
+  campers:
+    - role: "GeneralAssistant"
+      description: "General purpose AI assistant for various tasks"
+      promptTemplate: "Help with the following task: '{task}' on {os} system. Provide clear, helpful guidance."
+      systemPrompt: "You are a helpful AI assistant. Provide clear, concise, and accurate responses."
+      confidenceThreshold: 0.6
+      maxResponseLength: 1500
+      specializations:
+        - "general_assistance"
+        - "task_guidance"
+        - "information_retrieval"
+      
+    - role: "CodeHelper"
+      description: "Simple code assistance and basic programming help"
+      promptTemplate: "Provide coding help for: '{task}' on {os}. Focus on simple, working solutions."
+      systemPrompt: "You are a coding assistant. Provide simple, working code examples with explanations."
+      confidenceThreshold: 0.7
+      maxResponseLength: 2000
+      specializations:
+        - "basic_coding"
+        - "code_explanation"
+        - "simple_debugging"
+      codeGeneration:
+        enabled: true
+        defaultFileExtension: ".py"
+        includeTests: false
+        includeDocumentation: false
+      
+    - role: "QuickReviewer"
+      description: "Basic code and content review"
+      promptTemplate: "Review the following: '{task}' on {os}. Provide basic feedback and suggestions."
+      systemPrompt: "You are a reviewer. Provide constructive feedback and simple improvement suggestions."
+      confidenceThreshold: 0.6
+      maxResponseLength: 1000
+      specializations:
+        - "basic_review"
+        - "content_feedback"
+        - "simple_validation"
+      
+  # Simple Workflows
+  workflows:
+    generate_code:
+      description: "Simple code generation workflow"
+      sequence:
+        - "GeneralAssistant"
+        - "CodeHelper"
+      parallelExecution: false
+      auditGate: false
+      
+    review_code:
+      description: "Basic code review workflow"
+      sequence:
+        - "QuickReviewer"
+      parallelExecution: false
+      auditGate: false
+      
+    general_help:
+      description: "General assistance workflow"
+      sequence:
+        - "GeneralAssistant"
+      parallelExecution: false
+      auditGate: false
+      
+  # Minimal Security Configuration
+  security:
+    enableSecurityValidation: false
+    blockDangerousCommands: true
+    validateCodeSafety: false
+    auditAllResponses: false
+    confidenceThreshold: 0.5
+    dangerousPatterns:
+      - "rm -rf /"
+      - "del /f /s /q"
+      - "format"
+    
+  # Logging Configuration
+  logging:
+    level: "INFO"
+    enableCamperLogs: true
+    enableWorkflowLogs: false
+    enableAuditLogs: false
+    logRetentionDays: 3
+    logFormat: "simple"
+    
+  # Performance Configuration
+  performance:
+    maxConcurrentCampers: 2
+    responseTimeoutMs: 20000
+    retryAttempts: 2
+    cacheResponses: true
+    enableMetrics: false
+    
+  # Development Configuration
+  development:
+    enableFallbackResponses: true
+    mockOllamaWhenUnavailable: true
+    debugMode: false
+    verboseLogging: false

@@ -135,6 +135,18 @@ export class WorkspaceManager {
     }
 
     /**
+     * Check if a workspace path is valid and accessible
+     * Used by ConfigurationManager for validation
+     */
+    public isValidWorkspacePath(workspacePath: string): boolean {
+        try {
+            return fs.existsSync(workspacePath) && fs.statSync(workspacePath).isDirectory();
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Get the current workspace information
      * Requirement 15.1: Detect current open root folder in VS Code workspace
      */

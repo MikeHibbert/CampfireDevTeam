@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 from .processing_campfires import UnloadingCampfire, SecurityCampfire, OffloadingCampfire
-from .devteam_campfire import DevTeamCampfire
+from .campfire_loader import CampfireRegistry
 from .storage_manager import PartyBoxStorageManager
 from .context_manager import ContextManager, FileAttachment, ContextInfo
 
@@ -20,11 +20,12 @@ logger = logging.getLogger(__name__)
 
 class RiverboatSystem:
     """
-    Riverboat system for Party Box routing and message flow management
+    Generic riverboat system for Party Box routing and message flow management
+    Dynamically loads campfires from manifest configurations
     Implements Requirements 12.1, 12.6
     """
     
-    def __init__(self, redis_conn, ollama_client, party_box_storage: Path):
+    def __init__(self, redis_conn, ollama_client, party_box_storage: Path, manifests_directory: Path = None):
         self.party_box_storage = party_box_storage
         self.redis_conn = redis_conn
         self.ollama_client = ollama_client
@@ -39,9 +40,45 @@ class RiverboatSystem:
         self.unloading_campfire = UnloadingCampfire()
         self.security_campfire = SecurityCampfire()
         self.offloading_campfire = OffloadingCampfire()
-        self.devteam_campfire = DevTeamCampfire(ollama_client)
         
-        logger.info("Riverboat system initialized with processing campfires, storage manager, and context manager")
+        # Initialize campfire registry for dynamic loading
+        manifests_dir = manifests_directory or party_box_storage.parent
+        self.campfire_registry = CampfireRegistry(manifests_dir, ollama_client)
+        self.active_campfire = None
+        
+        logger.info("Riverboat system initialized with generic campfire loading capability")
+    
+    async def initialize_campfires(self):
+        """Initialize campfires from manifest files"""
+        try:
+            await self.campfire_registry.load_all_campfires()
+            
+            # Set default active campfire
+            self.active_campfire = self.campfire_registry.get_default_campfire()
+            
+            if self.active_campfire:
+                logger.info(f"Active campfire set to: {self.active_campfire.name}")
+            else:
+                logger.warning("No campfires loaded - system will use fallback processing")
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize campfires: {str(e)}")
+            raise
+    
+    def set_active_campfire(self, campfire_name: str) -> bool:
+        """Set the active campfire by name"""
+        campfire = self.campfire_registry.get_campfire(campfire_name)
+        if campfire:
+            self.active_campfire = campfire
+            logger.info(f"Active campfire changed to: {campfire_name}")
+            return True
+        else:
+            logger.warning(f"Campfire not found: {campfire_name}")
+            return False
+    
+    def get_available_campfires(self) -> List[str]:
+        """Get list of available campfire names"""
+        return self.campfire_registry.list_campfires()
     
     async def receive_party_box(self, party_box) -> Dict[str, Any]:
         """
@@ -98,10 +135,14 @@ class RiverboatSystem:
                 
                 raise SecurityValidationError(error_msg)
             
-            # Step 3: Route to DevTeam campfire for processing
-            logger.info(f"Routing Party Box {party_box_id} to DevTeam campfire")
-            result = await self.devteam_campfire.process(validated)
-            logger.info(f"Party Box {party_box_id} processed by DevTeam campfire")
+            # Step 3: Route to active campfire for processing
+            if not self.active_campfire:
+                logger.error("No active campfire available for processing")
+                raise RiverboatProcessingError("No active campfire configured")
+            
+            logger.info(f"Routing Party Box {party_box_id} to {self.active_campfire.name} campfire")
+            result = await self.active_campfire.process(validated)
+            logger.info(f"Party Box {party_box_id} processed by {self.active_campfire.name} campfire")
             
             # Step 4: Offloading campfire - package response
             response = await self.offloading_campfire.process(result)

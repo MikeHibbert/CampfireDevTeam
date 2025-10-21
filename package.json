@@ -43,17 +43,84 @@
         "campfire.mcpServer": {
           "type": "string",
           "default": "http://localhost:8080/mcp",
-          "description": "MCP server URL for CampfireValley backend"
+          "description": "MCP server URL for CampfireValley backend",
+          "pattern": "^https?://[^\\s/$.?#].[^\\s]*$",
+          "patternErrorMessage": "Must be a valid HTTP or HTTPS URL",
+          "examples": [
+            "http://localhost:8080/mcp",
+            "https://campfire.example.com/mcp"
+          ]
         },
         "campfire.partyBoxPath": {
           "type": "string",
           "default": "./party_box",
-          "description": "Path to Party Box storage directory"
+          "description": "Path to Party Box storage directory (relative to workspace root)",
+          "pattern": "^[^<>:\"|?*]+$",
+          "patternErrorMessage": "Path cannot contain invalid characters: < > : \" | ? *",
+          "examples": [
+            "./party_box",
+            "../shared/party_box",
+            "/tmp/campfire/party_box"
+          ]
         },
         "campfire.defaultPrompt": {
           "type": "string",
           "default": "Build code for {task} on {os}",
-          "description": "Default prompt template for code generation"
+          "description": "Default prompt template for code generation. Use {task} and {os} as placeholders",
+          "minLength": 10,
+          "maxLength": 500,
+          "examples": [
+            "Build code for {task} on {os}",
+            "Generate {task} implementation for {os} platform",
+            "Create production-ready code for {task} optimized for {os}"
+          ]
+        },
+        "campfire.enableAutoCompletion": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic code completion suggestions from Campfire"
+        },
+        "campfire.responseTimeout": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "maximum": 120000,
+          "description": "Timeout for backend responses in milliseconds (5-120 seconds)"
+        },
+        "campfire.retryAttempts": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Number of retry attempts for failed requests"
+        },
+        "campfire.logLevel": {
+          "type": "string",
+          "enum": ["error", "warn", "info", "debug"],
+          "default": "info",
+          "description": "Logging level for Campfire extension"
+        },
+        "campfire.securityValidation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable security validation for generated code and commands"
+        },
+        "campfire.workspaceValidation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Validate that all file operations stay within workspace boundaries"
+        },
+        "campfire.confirmFileOverwrites": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation dialog before overwriting existing files"
+        },
+        "campfire.maxFileSize": {
+          "type": "number",
+          "default": 1048576,
+          "minimum": 1024,
+          "maximum": 10485760,
+          "description": "Maximum file size in bytes for Party Box attachments (1KB - 10MB)"
         }
       }
     }

@@ -1,0 +1,261 @@
+# CampfireValley DevTeam Campfire Manifest
+# Configuration for specialized AI campers in development team cluster
+# Based on requirements 5.1, 5.2, 9.1, 9.2
+
+apiVersion: campfire.valley/v1
+kind: CampfireManifest
+metadata:
+  name: devteam-campfire
+  version: "1.0.0"
+  description: "DevTeam campfire with eight specialized AI campers for comprehensive development assistance"
+  created: "2025-10-21"
+  
+spec:
+  campfire:
+    name: "DevTeam"
+    type: "development"
+    maxConcurrentTasks: 5
+    responseTimeout: 30000  # 30 seconds
+    
+  # Ollama Configuration
+  ollama:
+    url: "http://host.docker.internal:11434"
+    defaultModel: "codellama:7b"
+    fallbackModel: "llama2:7b"
+    healthCheckInterval: 30  # seconds
+    maxRetries: 3
+    
+  # Redis Configuration for MCP brokering
+  redis:
+    url: "redis://redis:6379"
+    database: 0
+    keyPrefix: "campfire:devteam:"
+    sessionTimeout: 3600  # 1 hour
+    
+  # Party Box Storage Configuration
+  storage:
+    partyBoxPath: "/app/party_box"
+    maxFileSize: 10485760  # 10MB
+    allowedFileTypes:
+      - ".py"
+      - ".js"
+      - ".ts"
+      - ".html"
+      - ".css"
+      - ".json"
+      - ".yaml"
+      - ".yml"
+      - ".md"
+      - ".txt"
+      - ".sh"
+      - ".bat"
+      - ".ps1"
+      - ".dockerfile"
+      - ".sql"
+    retentionDays: 30
+    
+  # Specialized Campers Configuration
+  campers:
+    - role: "RequirementsGatherer"
+      description: "Analyzes tasks and determines scope and requirements"
+      promptTemplate: "Analyze task '{task}' on {os}. Determine scope, requirements, and suggest implementation approach."
+      systemPrompt: "You are an expert requirements analyst. Provide clear, actionable requirements and scope analysis."
+      confidenceThreshold: 0.7
+      maxResponseLength: 2000
+      specializations:
+        - "requirement_analysis"
+        - "scope_definition"
+        - "task_breakdown"
+      
+    - role: "OSExpert"
+      description: "Provides OS-specific recommendations and technology stack advice"
+      promptTemplate: "Recommend technology stack and OS-specific considerations for '{task}' on {os} system."
+      systemPrompt: "You are an expert in {os} systems and technology stacks. Provide specific, actionable recommendations."
+      confidenceThreshold: 0.7
+      maxResponseLength: 1500
+      specializations:
+        - "technology_stack"
+        - "os_optimization"
+        - "platform_compatibility"
+      
+    - role: "BackEndDev"
+      description: "Generates backend/server-side code and API implementations"
+      promptTemplate: "Generate backend/server-side code for '{task}' on {os}. Focus on API endpoints, data models, and business logic."
+      systemPrompt: "You are an expert backend developer. Generate clean, production-ready server-side code with proper error handling."
+      confidenceThreshold: 0.8
+      maxResponseLength: 5000
+      specializations:
+        - "api_development"
+        - "database_design"
+        - "server_architecture"
+        - "business_logic"
+      codeGeneration:
+        enabled: true
+        defaultFileExtension: ".py"
+        includeTests: false
+        includeDocumentation: true
+      
+    - role: "FrontEndDev"
+      description: "Creates frontend/client-side code and user interfaces"
+      promptTemplate: "Generate frontend/client-side code for '{task}' on {os}. Focus on user interface, user experience, and client-side logic."
+      systemPrompt: "You are an expert frontend developer. Generate modern, responsive client-side code with good UX practices."
+      confidenceThreshold: 0.8
+      maxResponseLength: 5000
+      specializations:
+        - "ui_development"
+        - "user_experience"
+        - "responsive_design"
+        - "client_side_logic"
+      codeGeneration:
+        enabled: true
+        defaultFileExtension: ".html"
+        includeTests: false
+        includeDocumentation: true
+      
+    - role: "Tester"
+      description: "Creates comprehensive test cases and testing strategies"
+      promptTemplate: "Create comprehensive test cases for '{task}' on {os}. Include unit tests, integration tests, and testing strategy."
+      systemPrompt: "You are an expert QA engineer and test developer. Create thorough, maintainable test suites."
+      confidenceThreshold: 0.8
+      maxResponseLength: 4000
+      specializations:
+        - "unit_testing"
+        - "integration_testing"
+        - "test_automation"
+        - "quality_assurance"
+      codeGeneration:
+        enabled: true
+        defaultFileExtension: ".py"
+        includeTests: true
+        includeDocumentation: true
+      
+    - role: "DevOps"
+      description: "Provides deployment scripts and infrastructure configuration"
+      promptTemplate: "Create deployment scripts and DevOps configuration for '{task}' on {os}. Include Docker, CI/CD, and infrastructure setup."
+      systemPrompt: "You are an expert DevOps engineer. Create robust, scalable deployment and infrastructure solutions."
+      confidenceThreshold: 0.8
+      maxResponseLength: 3000
+      specializations:
+        - "containerization"
+        - "ci_cd_pipelines"
+        - "infrastructure_as_code"
+        - "deployment_automation"
+      codeGeneration:
+        enabled: true
+        defaultFileExtension: ".yml"
+        includeTests: false
+        includeDocumentation: true
+      
+    - role: "TerminalExpert"
+      description: "Suggests OS-specific terminal commands for debugging and operations"
+      promptTemplate: "Provide {os}-specific terminal commands for '{task}'. Include debugging, log checking, Docker operations, and Python execution commands."
+      systemPrompt: "You are an expert in {os} terminal operations. Provide safe, effective commands with explanations."
+      confidenceThreshold: 0.8
+      maxResponseLength: 2000
+      specializations:
+        - "command_line_operations"
+        - "debugging_commands"
+        - "system_administration"
+        - "automation_scripts"
+      commandGeneration:
+        enabled: true
+        maxCommands: 5
+        safetyChecks: true
+        osSpecific: true
+      
+    - role: "Auditor"
+      description: "Performs code review, security analysis, and quality verification"
+      promptTemplate: "Audit and review code for '{task}' on {os}. Check security vulnerabilities, syntax, code coverage, and best practices."
+      systemPrompt: "You are an expert code auditor and security reviewer. Provide detailed, actionable feedback on code quality and security."
+      confidenceThreshold: 0.9
+      maxResponseLength: 3000
+      specializations:
+        - "security_analysis"
+        - "code_quality_review"
+        - "best_practices_validation"
+        - "compliance_checking"
+      auditing:
+        enabled: true
+        securityChecks: true
+        syntaxValidation: true
+        coverageAnalysis: true
+        gatekeeper: true  # Acts as final approval gate
+      
+  # Collaboration Workflow Configuration
+  workflows:
+    generate_code:
+      description: "Complete code generation workflow with all specialized campers"
+      sequence:
+        - "RequirementsGatherer"
+        - "OSExpert"
+        - "BackEndDev"
+        - "FrontEndDev"
+        - "Tester"
+        - "DevOps"
+        - "TerminalExpert"
+        - "Auditor"  # Final gate
+      parallelExecution: false
+      auditGate: true
+      
+    review_code:
+      description: "Code review workflow focusing on quality and security"
+      sequence:
+        - "RequirementsGatherer"
+        - "OSExpert"
+        - "Auditor"
+      parallelExecution: false
+      auditGate: true
+      
+    execute_command:
+      description: "Terminal command generation and validation workflow"
+      sequence:
+        - "OSExpert"
+        - "TerminalExpert"
+        - "Auditor"
+      parallelExecution: false
+      auditGate: true
+      
+  # Security Configuration
+  security:
+    enableSecurityValidation: true
+    blockDangerousCommands: true
+    validateCodeSafety: true
+    auditAllResponses: true
+    confidenceThreshold: 0.7
+    dangerousPatterns:
+      - "rm -rf /"
+      - "del /f /s /q"
+      - "format"
+      - "fdisk"
+      - "dd if="
+      - ":(){ :|:& };:"
+      - "sudo rm"
+      - "chmod 777"
+      - "eval("
+      - "exec("
+      - "os.system("
+      - "shell=true"
+    
+  # Logging Configuration
+  logging:
+    level: "INFO"
+    enableCamperLogs: true
+    enableWorkflowLogs: true
+    enableAuditLogs: true
+    logRetentionDays: 7
+    logFormat: "json"
+    
+  # Performance Configuration
+  performance:
+    maxConcurrentCampers: 3
+    responseTimeoutMs: 30000
+    retryAttempts: 3
+    cacheResponses: false  # Disable for development
+    enableMetrics: true
+    
+  # Development Configuration
+  development:
+    enableFallbackResponses: true
+    mockOllamaWhenUnavailable: true
+    debugMode: false
+    verboseLogging: false
